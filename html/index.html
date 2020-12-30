@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+</head>
+
+<body>
+
+    <script>
+        //@ts-check
+
+
+
+
+
+        async function transmit() {
+            console.log("--transmit")
+
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: true })
+
+                var t0 = performance.now()
+                document.getElementById('video1').srcObject = stream
+                //console.log("delay of " + (performance.now() - t0) + "ms")
+                let pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+                pc.oniceconnectionstatechange = e => console.log(pc.iceConnectionState)
+                //pc.onicecandidate = event => { console.log('ignore ice candidate') }
+
+
+                pc.addStream(stream)
+                let desc = await pc.createOffer()
+                await pc.setLocalDescription(desc)
+
+
+                console.log('sending N line offer:', desc.sdp.split(/\r\n|\r|\n/).length)
+                let resp = await fetch('/sdp', { method: 'POST', body: desc.sdp })
+                let resptext = await resp.text()
+                if (resp.status != 202) {
+                    console.error('sfu http error', resp.status, resptext)
+                    pc.close()
+                    return
+                }
+                console.log('got N line answer:', resptext.split(/\r\n|\r|\n/).length)
+                console.log(resptext)
+                await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: resptext }))
+
+
+            } catch (error) {
+                console.error('pub error', error)
+            }
+        }
+
+
+        async function receive() {
+            console.log("--receive")
+
+
+
+            try {
+                const url = suburl + '/txid=' + longRandomString()
+                let resp = await fetch(url, { method: 'POST', body: '' })
+                let resptext = await resp.text()
+                if (resp.status != 202) {
+                    console.error('sfu http error', resp.status, resptext)
+                    pc.close()
+                    return
+                }
+
+
+                let pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+                pc.oniceconnectionstatechange = e => console.log(pc.iceConnectionState)
+                //pc.onicecandidate = event => { console.log('ignore ice candidate') }
+                // pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: posttext }))
+
+                pc.addTransceiver('audio', { 'direction': 'recvonly' })
+                pc.addTransceiver('video', { 'direction': 'recvonly' })
+
+                pc.ontrack = function (event) {
+                    var el = document.getElementById('video1')
+                    el.srcObject = event.streams[0]
+                    el.autoplay = true
+                    el.controls = true
+                }
+
+                console.log('got N line offer:', resptext.split(/\r\n|\r|\n/).length)
+
+                await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: resptext }))
+                let init = await pc.createAnswer()
+                await pc.setLocalDescription(init)
+
+                console.log(pc.localDescription)
+                console.log('will post N line answer:', pc.localDescription.sdp.split(/\r\n|\r|\n/).length)
+                await fetch(url, { method: 'POST', body: pc.localDescription.sdp })
+
+                console.log('sent answer')
+
+            } catch (error) {
+                console.error('receive error', error)
+            }
+        }
+
+
+        //let rxwhipurl = window.location.origin + '/rxwhip'
+
+        // document.getElementById("originurl").textContent = rxwhipurl
+
+
+        function openTab(evt, tabTitle) {
+            var i, tabcontent, tablinks
+            tabcontent = document.getElementsByClassName("tabcontent")
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none"
+            }
+            tablinks = document.getElementsByName("tablinks")
+
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].className = tablinks[i].className.replace(" is-active", "")
+            }
+            document.getElementById(tabTitle).style.display = "block"
+            evt.currentTarget.parentElement.className += " is-active"
+        }
+        let rxmode = sessionStorage.getItem('receivemode')
+        console.log(rxmode)
+        if (typeof rxmode === 'undefined' || rxmode === null) {
+            // the variable is not defined or null
+            document.getElementById('txmode').click()
+            console.log(4)
+        } else {
+            document.getElementById('rxmode').click()
+            console.log(3)
+        }
+    </script>
+</body>
+
+</html>
