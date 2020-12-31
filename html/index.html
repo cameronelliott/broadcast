@@ -1,47 +1,79 @@
 <!DOCTYPE html>
 <html>
-<head>
-</head>
+
+<head />
 
 <body>
 
     <script>
         //@ts-check
+        //var t0 = performance.now() //console.log("delay of " + (performance.now() - t0) + "ms")
 
 
 
 
+        var sp = new URLSearchParams(window.location.search);
 
-        async function transmit() {
-            console.log("--transmit")
+        // //Iterate the search parameters.
+        // for (let p of searchParams) {
+        //   console.log(p);
+        // }
 
+        if (sp.has("sub") === true) {
+            console.log("--subscribe")
+            subscribe()
+        } else {
+            console.log("--publish")
+            publish()
+        }
+
+
+
+        async function publish() {
 
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: true })
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false })
 
-                var t0 = performance.now()
-                document.getElementById('video1').srcObject = stream
-                //console.log("delay of " + (performance.now() - t0) + "ms")
+                let video = document.createElement("video")
+                video.srcObject = stream
+                video.autoplay = true
+                video.width = 500
+                video.controls = true
+                document.body.appendChild(video);
+
+
                 let pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
                 pc.oniceconnectionstatechange = e => console.log(pc.iceConnectionState)
                 //pc.onicecandidate = event => { console.log('ignore ice candidate') }
 
+               // await new Promise(resolve => setTimeout(resolve, 2000))
 
-                pc.addStream(stream)
+                for (const track of stream.getTracks()) {
+                    console.log('num vid tracks ', stream.getVideoTracks().length)
+                    console.log('add track', track)
+                    pc.addTrack(track,stream);
+                }
+
+
                 let desc = await pc.createOffer()
                 await pc.setLocalDescription(desc)
 
 
+
+
+
                 console.log('sending N line offer:', desc.sdp.split(/\r\n|\r|\n/).length)
-                let resp = await fetch('/sdp', { method: 'POST', body: desc.sdp })
+
+                let resp = await fetch('/pub', { method: 'POST', body: desc.sdp })
                 let resptext = await resp.text()
+                console.log('fetch status code', resp.status)
                 if (resp.status != 202) {
                     console.error('sfu http error', resp.status, resptext)
                     pc.close()
                     return
                 }
                 console.log('got N line answer:', resptext.split(/\r\n|\r|\n/).length)
-                console.log(resptext)
+                //console.log(resptext)
                 await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: resptext }))
 
 
@@ -51,51 +83,71 @@
         }
 
 
-        async function receive() {
-            console.log("--receive")
-
-
-
+        async function subscribe() {
             try {
-                const url = suburl + '/txid=' + longRandomString()
-                let resp = await fetch(url, { method: 'POST', body: '' })
+
+                let video = document.createElement("video")
+                //video.srcObject = stream
+                video.muted = true
+                video.autoplay = true  // autoplay needs muted, I think
+                video.width = 500
+                video.controls = true
+
+                document.body.appendChild(video);
+
+                let pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+                pc.oniceconnectionstatechange = e => console.log(pc.iceConnectionState)
+                //pc.onicecandidate = event => { console.log('ignore ice candidate') }
+
+        
+               
+
+                //https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/addTrack
+                let inboundStream = null;
+                pc.ontrack = ev => {
+                    console.log('num mediastreams ', ev.streams.length)
+                    for (const ms of ev.streams) {
+                        console.log('stream ', ms)
+                        console.log('num vid tracks ', ms.getVideoTracks().length)
+                    }
+
+                    if (ev.streams && ev.streams[0]) {
+                        video.srcObject = ev.streams[0];
+                    } else {
+                        if (!inboundStream) {
+                            inboundStream = new MediaStream();
+                            video.srcObject = inboundStream;
+                        }
+                        inboundStream.addTrack(ev.track);
+                    }
+                }
+
+                pc.addTransceiver('audio', { 'direction': 'recvonly' })
+                pc.addTransceiver('video', { 'direction': 'recvonly' })
+
+
+                let desc = await pc.createOffer()
+                await pc.setLocalDescription(desc)
+
+
+                console.log('sending N line offer:', desc.sdp.split(/\r\n|\r|\n/).length)
+
+                let resp = await fetch('/sub', { method: 'POST', body: desc.sdp })
                 let resptext = await resp.text()
+                console.log('fetch status code', resp.status)
                 if (resp.status != 202) {
                     console.error('sfu http error', resp.status, resptext)
                     pc.close()
                     return
                 }
-
-
-                let pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
-                pc.oniceconnectionstatechange = e => console.log(pc.iceConnectionState)
-                //pc.onicecandidate = event => { console.log('ignore ice candidate') }
-                // pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: posttext }))
-
-                pc.addTransceiver('audio', { 'direction': 'recvonly' })
-                pc.addTransceiver('video', { 'direction': 'recvonly' })
-
-                pc.ontrack = function (event) {
-                    var el = document.getElementById('video1')
-                    el.srcObject = event.streams[0]
-                    el.autoplay = true
-                    el.controls = true
-                }
-
-                console.log('got N line offer:', resptext.split(/\r\n|\r|\n/).length)
-
-                await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: resptext }))
-                let init = await pc.createAnswer()
-                await pc.setLocalDescription(init)
-
-                console.log(pc.localDescription)
-                console.log('will post N line answer:', pc.localDescription.sdp.split(/\r\n|\r|\n/).length)
-                await fetch(url, { method: 'POST', body: pc.localDescription.sdp })
+                console.log('got N line answer:', resptext.split(/\r\n|\r|\n/).length)
+                //console.log(resptext)
+                await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: resptext }))
 
                 console.log('sent answer')
 
             } catch (error) {
-                console.error('receive error', error)
+                console.error('subscribe error', error)
             }
         }
 
@@ -105,30 +157,7 @@
         // document.getElementById("originurl").textContent = rxwhipurl
 
 
-        function openTab(evt, tabTitle) {
-            var i, tabcontent, tablinks
-            tabcontent = document.getElementsByClassName("tabcontent")
-            for (i = 0; i < tabcontent.length; i++) {
-                tabcontent[i].style.display = "none"
-            }
-            tablinks = document.getElementsByName("tablinks")
 
-            for (i = 0; i < tablinks.length; i++) {
-                tablinks[i].className = tablinks[i].className.replace(" is-active", "")
-            }
-            document.getElementById(tabTitle).style.display = "block"
-            evt.currentTarget.parentElement.className += " is-active"
-        }
-        let rxmode = sessionStorage.getItem('receivemode')
-        console.log(rxmode)
-        if (typeof rxmode === 'undefined' || rxmode === null) {
-            // the variable is not defined or null
-            document.getElementById('txmode').click()
-            console.log(4)
-        } else {
-            document.getElementById('rxmode').click()
-            console.log(3)
-        }
     </script>
 </body>
 

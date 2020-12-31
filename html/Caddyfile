@@ -1,9 +1,16 @@
-x186k.duckdns.org:8000
+https://x186k.duckdns.org:8000
 
 
 tls {
-    dns duckdns ee5455b8-b7b2-4434-ad9a-d7d009341844
+    dns duckdns {$DUCKDNS}
 }
+
+
+# broadcast tool
+reverse_proxy /pub http://localhost:8080
+reverse_proxy /sub http://localhost:8081
+
+
 
 reverse_proxy /pub localhost:8080
 reverse_proxy /sub* localhost:8080

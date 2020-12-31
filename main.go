@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
-	"github.com/pion/webrtc/v3/examples/internal/signal"
 )
 
 const (
@@ -18,12 +20,15 @@ const (
 )
 
 func main() { // nolint:gocognit
-	sdpChan := signal.HTTPSDPServer()
+	fmt.Println("running")
+
+	pubOfrChan, pubAnsChan := HTTPSDPServerWhip("/pub", 8080)
+	subOfrChan, subAnsChan := HTTPSDPServerWhip("/sub", 8081)
 
 	// Everything below is the Pion WebRTC API, thanks for using it ❤️.
 	offer := webrtc.SessionDescription{}
-	signal.Decode(<-sdpChan, &offer)
-	fmt.Println("")
+	signalDecode(<-pubOfrChan, &offer)
+	fmt.Println("got ofr")
 
 	peerConnectionConfig := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
@@ -107,15 +112,16 @@ func main() { // nolint:gocognit
 	<-gatherComplete
 
 	// Get the LocalDescription and take it to base64 so we can paste in browser
-	fmt.Println(signal.Encode(*peerConnection.LocalDescription()))
+	//fmt.Println(signal.Encode(*peerConnection.LocalDescription()))
+	fmt.Println("sending sdp")
+	pubAnsChan <- peerConnection.LocalDescription().SDP
 
 	localTrack := <-localTrackChan
 	for {
-		fmt.Println("")
-		fmt.Println("Curl an base64 SDP to start sendonly peer connection")
+		fmt.Println("whip to /sub:8081 for ofr/ans")
 
 		recvOnlyOffer := webrtc.SessionDescription{}
-		signal.Decode(<-sdpChan, &recvOnlyOffer)
+		signalDecode(<-subOfrChan, &recvOnlyOffer)
 
 		// Create a new PeerConnection
 		peerConnection, err := webrtc.NewPeerConnection(peerConnectionConfig)
@@ -167,6 +173,41 @@ func main() { // nolint:gocognit
 		<-gatherComplete
 
 		// Get the LocalDescription and take it to base64 so we can paste in browser
-		fmt.Println(signal.Encode(*peerConnection.LocalDescription()))
+		//fmt.Println(signal.Encode(*peerConnection.LocalDescription()))
+		subAnsChan <- peerConnection.LocalDescription().SDP
 	}
+}
+
+func HTTPSDPServerWhip(url string, port int) (chan string, chan string) {
+
+	bodyChan := make(chan string)
+	respChan := make(chan string)
+	http.HandleFunc(url, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := ioutil.ReadAll(r.Body)
+
+		bodyChan <- string(body)
+
+		resp := <-respChan
+
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(resp))
+	})
+
+	go func() {
+		err := http.ListenAndServe(":"+strconv.Itoa(port), nil)
+		if err != nil {
+			panic(err)
+		}
+	}()
+
+	return bodyChan, respChan
+}
+
+func signalDecode(in string, obj interface{}) {
+	x, ok := obj.(*webrtc.SessionDescription)
+	if !ok {
+		panic("bad type")
+	}
+	x.Type = webrtc.SDPTypeOffer
+	x.SDP = in	
 }
